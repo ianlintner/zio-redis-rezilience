@@ -1,7 +1,7 @@
-package nl.vroste.rezilience
-
+import RedisCircuitBreaker.RedisCircuitBreakerCallError
+import Util.RedisRef
 import nl.vroste.rezilience.Policy.PolicyError
-import nl.vroste.rezilience.RedisCircuitBreaker.RedisCircuitBreakerCallError
+import nl.vroste.rezilience.{Policy, Retry, TrippingStrategy}
 import zio.*
 import zio.redis.Redis
 import zio.schema.{DeriveSchema, Schema}
@@ -136,7 +136,7 @@ object RedisCircuitBreaker {
     key: String,
     redis: Redis,
     trippingStrategy: ZIO[Scope, Nothing, TrippingStrategy],
-    resetPolicy: Schedule[Any, Any, Any] = Retry.Schedules.exponentialBackoff(1.second, 1.minute), // TODO should move to its own namespace
+    resetPolicy: Schedule[Any, Any, Any] = Retry.Schedules.exponentialBackoff(1.second, 2.minute),
     isFailure: PartialFunction[E, Boolean] = isFailureAny[E],
     onStateChange: State => UIO[Unit] = _ => ZIO.unit,
   ): ZIO[Scope, Throwable, RedisCircuitBreaker[E]] =
@@ -178,12 +178,13 @@ object RedisCircuitBreaker {
     halfOpenSwitch: RedisRef[Boolean],
   ) extends RedisCircuitBreaker[E] {
 
-    val changeToOpen = ZIO.logInfo("Change to open") *>
+    val changeToOpen = ZIO.logDebug("Change to open") *>
       state.set(Open) *>
       resetRequests.offer(()) <*
       onStateChange(Open).fork // Do not wait for user code
 
-    val changeToClosed = strategy.onReset *>
+    val changeToClosed = ZIO.logDebug("Change to open") *>
+      strategy.onReset *>
       schedule.reset *>
       state.set(Closed) <*
       onStateChange(Closed).fork // Do not wait for user code
@@ -199,7 +200,7 @@ object RedisCircuitBreaker {
               (for {
                 shouldTrip   <- strategy.shouldTrip(callSuccessful)
                 currentState <- state.get
-                _            <- ZIO.logInfo(s"shouldTrip: $shouldTrip, currentState: $currentState, callSuccessful: $callSuccessful")
+                _            <- ZIO.logDebug(s"shouldTrip: $shouldTrip, currentState: $currentState, callSuccessful: $callSuccessful")
                 _            <- changeToOpen.when(currentState == Closed && shouldTrip)
               } yield ()).uninterruptible
 
@@ -212,7 +213,8 @@ object RedisCircuitBreaker {
             ZIO.fail(RedisCircuitBreakerOpen)
           case HalfOpen =>
             for {
-              isFirstCall <- halfOpenSwitch.getAndUpdate(_ => false)
+              isFirstCall <- halfOpenSwitch.getSet(false)
+              _           <- ZIO.logDebug(s"HalfOpen: isFirstCall: $isFirstCall")
               result      <-
                 if (isFirstCall) {
                   tapZIOOnUserDefinedFailure(f)(
@@ -251,6 +253,6 @@ object RedisCircuitBreaker {
 
   }
 
-  private[rezilience] def isFailureAny[E]: PartialFunction[E, Boolean] = { case _ => true }
+  def isFailureAny[E]: PartialFunction[E, Boolean] = { case _ => true }
 
 }

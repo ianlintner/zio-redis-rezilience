@@ -1,4 +1,4 @@
-package nl.vroste.rezilience
+package Util
 
 import zio.redis.Redis
 import zio.schema.Schema
@@ -18,6 +18,12 @@ case class RedisRef[A](key: String, default: A, redis: Redis) {
   def get(implicit trace: Trace, schema: Schema[A]): UIO[A] = {
     for {
       r <- redis.get(key).returning[A].tapErrorCause(ZIO.logErrorCause(_)).orDie
+    } yield r.getOrElse(default)
+  }
+
+  def getSet(a: A)(implicit trace: Trace, schema: Schema[A]): UIO[A] = {
+    for {
+      r <- redis.getSet(key, a).returning[A].tapErrorCause(ZIO.logErrorCause(_)).orDie
     } yield r.getOrElse(default)
   }
 

@@ -1,16 +1,11 @@
+import RedisCircuitBreaker.RedisCircuitBreakerOpen
+import _root_.Util.ProtobufCodecSupplier
 import nl.vroste.rezilience.*
-import nl.vroste.rezilience.RedisCircuitBreaker.*
 import zio.*
 import zio.redis.embedded.EmbeddedRedis
-import zio.redis.{CodecSupplier, Redis, RedisExecutor}
-import zio.schema.Schema
-import zio.schema.codec.{BinaryCodec, ProtobufCodec}
+import zio.redis.{Redis, RedisExecutor}
 
-object Main extends ZIOAppDefault {
-
-  object ProtobufCodecSupplier extends CodecSupplier {
-    def get[A: Schema]: BinaryCodec[A] = ProtobufCodec.protobufCodec
-  }
+object CircuitBreaker extends ZIOAppDefault {
 
   // We use Throwable as error type in this example
   private def callExternalSystem(someInput: String): ZIO[Any, Throwable, Boolean] = for {
@@ -22,7 +17,7 @@ object Main extends ZIOAppDefault {
     }
   } yield output
 
-  private val circuitBreakerLayer: ZLayer[Scope with Redis, Throwable, RedisCircuitBreaker[Throwable]] = ZLayer {
+  private val circuitBreakerLayer: ZLayer[Scope & Redis, Throwable, RedisCircuitBreaker[Any]] = ZLayer {
     for {
       redis          <- ZIO.service[Redis]
       circuitBreaker <- RedisCircuitBreaker.make(
@@ -34,21 +29,21 @@ object Main extends ZIOAppDefault {
     } yield circuitBreaker
   }
 
-  override def run: ZIO[Environment with ZIOAppArgs with Scope, Any, Any] = {
+  override def run: ZIO[Environment & ZIOAppArgs & Scope, Any, Any] = {
     ZIO.serviceWithZIO[RedisCircuitBreaker[Throwable]] { cb =>
       cb(callExternalSystem("some input"))
         .flatMap(r => ZIO.logInfo(s"External system returned $r"))
         .catchSome {
-          case RedisCircuitBreakerOpen =>
+          case RedisCircuitBreakerOpen             =>
             ZIO.logInfo("Circuit breaker blocked the call to our external system")
-          case WrappedError(e)         =>
+          case RedisCircuitBreaker.WrappedError(e) =>
             ZIO.logInfo(s"External system threw an exception: $e")
         }
     }
   }.delay(100.milliseconds)
     .repeatN(20)
     .provideSome[Scope](
-      ZLayer.succeed[CodecSupplier](ProtobufCodecSupplier),
+      ProtobufCodecSupplier.layer,
       EmbeddedRedis.layer,
       RedisExecutor.layer,
       Redis.layer,
