@@ -8,10 +8,10 @@ import zio.test.TestAspect.{diagnose, timeout}
 
 import java.time.Instant
 
-object RedisRedisRateLimiterSpec extends ZIOSpecDefault {
-  def testKey       = "test-rate-limiter:" + Instant.now.getEpochSecond
+object RedisRateLimiterSpec extends ZIOSpecDefault {
+  def testKey: String = "test-rate-limiter:" + Instant.now.getEpochSecond
 
-  override def spec = suite("RedisRateLimiter")(
+  override def spec: Spec[Any, Throwable] = suite("RedisRateLimiter")(
     test("execute up to max calls immediately") {
       ZIO.scoped {
         for {
